@@ -1,0 +1,1 @@
+At the moment it's hardcoded to fetch the calendar for the fundamental period of the International Masters. In the future I plan to add users and each of them can have an iCal depending on a "search" keyword.
