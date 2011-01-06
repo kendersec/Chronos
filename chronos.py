@@ -2,12 +2,35 @@ import os
 import urllib2
 import string
 import re
+import logging
 from google.appengine.api import urlfetch
 from google.appengine.ext.webapp import template
 from google.appengine.ext import webapp
+from google.appengine.ext import db
 from google.appengine.ext.webapp.util import run_wsgi_app
 from HTMLParser import HTMLParser
 from datetime import datetime, timedelta
+
+## Class to hold the calendar in the DB
+class Calendar(db.Model):
+  ICS = db.TextProperty()
+  dt = db.DateTimeProperty(auto_now=True)
+  
+  @staticmethod
+  def getMe():
+    acal = Calendar.all()
+    if acal.count() == 1:
+      return acal[0]
+    else:
+      for cal in acal:
+        cal.remove()
+      return Calendar()
+      
+  def date(self):
+    return (self.dt + timedelta(hours = 2)).ctime()
+      
+  
+## Parser for the data
 
 class infoParser(HTMLParser):
   def __init__(self):
@@ -75,12 +98,28 @@ class infoParser(HTMLParser):
     elif tag == "td":
       self.end_td()
 
-
-
+## Parser to get the number of the current week
+class weekParser(HTMLParser):
+  def __init__(self):
+    self.pianoSelected = False
+    self.nweek = 1
+    HTMLParser.__init__(self)
+  
+  def handle_starttag(self, tag, attrs):
+    if tag == "div" and len(attrs) > 0 and attrs[0][1] == "pianoselected":
+      self.pianoSelected = True
+    elif tag == "map" and len(attrs) > 0 and self.pianoSelected:
+      self.nweek = int(re.sub("[\D]","",attrs[0][1]))
+      
+  def handle_endtag(self, tag):
+    if tag == "div" and self.pianoSelected:
+      self.pianoSelected = False
+    
 
 def dateICal(date):
   return date.strftime("%Y%m%dT%H%M%S")
   
+## Build the ICS
 def make_event_list(parsed):
   events = []
   for i in parsed:
@@ -107,85 +146,88 @@ def make_event_list(parsed):
     
     events.append(event)
 
-    # print ""
-    # print "UID:chronos-%s-%s-%s" % (event["groups"], dateICal(event["start"]), event_condensed_name)
-    # print "DTSTAMP:%s" % dateICal(datetime.now())
-    # print "SUMMARY:%s - %s %s" % (event["name"], event["prof"], event["room"])
-    # print "DESCRIPTION:Cours: %s\\nProf: %s\\nSalle: %s\\nGroupes: %s" % (event["name"], event["prof"], event["room"], event["groups"])
-    # print "DTSTART:%s" % dateICal(event["start"])
-    # print "DTEND:%s" % dateICal(event["end"])
-    # print "LOCATION:%s" % event["room"]
+#   print ""
+#    print "UID:chronos-%s-%s-%s" % (event["groups"], dateICal(event["start"]), event_condensed_name)
+#    print "DTSTAMP:%s" % dateICal(datetime.now())
+#    print "SUMMARY:%s - %s %s" % (event["name"], event["prof"], event["room"])
+#    print "DESCRIPTION:Cours: %s\\nProf: %s\\nSalle: %s\\nGroupes: %s" % (event["name"], event["prof"], event["room"], event["groups"])
+#    print "DTSTART:%s" % dateICal(event["start"])
+#    print "DTEND:%s" % dateICal(event["end"])
+#    print "LOCATION:%s" % event["room"]
   return events
     
-    
+## Fetch the data from Chronos
 class getICS(webapp.RequestHandler):
   def get(self):  
+
     url = "http://chronos.epita.net/"
-	
+    url = "http://chronos.epita.net/ade/standard/gui/interface.jsp?projectId=4&login=student&password="
+
     session_id = ""
     result = urlfetch.fetch(url)
     if result.status_code == 200:
       session_id = result.headers['set-cookie']
-      
-    url = "http://chronos.epita.net/ade/standard/direct_planning.jsp?projectId=3&login=student&password="
+
+    url = "http://chronos.epita.net/ade/standard/gui/interface.jsp?projectId=4&login=student&password="
     result = urlfetch.fetch(url, headers = { 'Cookie': session_id })
-    DisplaySav51 = result.headers['set-cookie']
-    
+    #DisplaySav51 = result.headers['set-cookie']
+
     tree = "http://chronos.epita.net/ade/standard/gui/tree.jsp"
-    cookie = "%s; %s" % (DisplaySav51, session_id)
-    
+    #cookie = "%s; %s" % (DisplaySav51, session_id)
+    cookie = session_id
+
     # Find the leaf following the given path
     categorie = "category=%s" % "trainee"
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, categorie)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    
+
     index_epita = 1
     branch = "branchId=%i" % index_epita
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, branch)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
 
-    branch = "branchId=%i" % 13
+    branch = "branchId=%i" % 748
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, branch)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    
-    branch = "branchId=%i" % 15
+
+    branch = "branchId=%i" % 989
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, branch)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
     
     # Access the leaf
-    select = "selectId=%i" % 18
+    select = "selectId=%i" % 1089
     url = "%s?%s&forceLoad=false&scroll=0" % (tree, select)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
     
     # Get the time bar
-    url = "http://chronos.educplanet.com/ade/custom/modules/plannings/pianoWeeks.jsp"
+    url = "http://chronos.epita.net/ade/custom/modules/plannings/pianoWeeks.jsp"
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
+    
+    parser = weekParser()
+    parser.feed(result.content)
+    parser.close()
+    nweek = parser.nweek - 1
     
     # Set the weeks
-    bounds = "http://chronos.educplanet.com/ade/custom/modules/plannings/bounds.jsp"
-    week = "week=%i" % 1
+    bounds = "http://chronos.epita.net/ade/custom/modules/plannings/bounds.jsp"
+
+    ## Obtain next 8 weeks of the calendar
+    week = "week=%i" % nweek
     url = "%s?%s&reset=true" % (bounds, week)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    # week 2
-    week = "week=%i" % 2
-    url = "%s?%s&reset=false" % (bounds, week)
-    result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    # week 3
-    week = "week=%i" % 3
-    url = "%s?%s&reset=false" % (bounds, week)
-    result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    # week 4
-    week = "week=%i" % 4
-    url = "%s?%s&reset=false" % (bounds, week)
-    result = urlfetch.fetch(url, headers = { 'cookie': cookie })
     
+    for i in range(1,7):
+      week = "week=%i" % (nweek + i)
+      url = "%s?%s&reset=false" % (bounds, week)
+      result = urlfetch.fetch(url, headers = { 'cookie': cookie })
+     
     # Retrieve the content and parse it
-    info = "http://chronos.educplanet.com/ade/custom/modules/plannings/info.jsp"
+    info = "http://chronos.epita.net/ade/custom/modules/plannings/info.jsp"
     url = info
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
-    
+
     parser = infoParser()
-    parser.feed(result.content)
+    parser.feed(unicode(result.content, "utf-8", "ignore"))
     parser.close()
     
     # result:
@@ -201,26 +243,29 @@ class getICS(webapp.RequestHandler):
       'parseres': parser.result,
       'events': events,
       'stamp': dateICal(datetime.now()),
-      'id': "%s;\n%s" % (DisplaySav51, session_id)
+      'id': session_id
     }
 
     path = os.path.join(os.path.dirname(__file__), 'calendar.ics')
-    self.response.out.write(template.render(path, template_values))
+    
+    cal = Calendar.getMe()
+    cal.ICS = template.render(path, template_values)
+    cal.put()
+
+
+class showICS(webapp.RequestHandler):
+  def get(self):
+    self.response.out.write(Calendar.getMe().ICS)
     
 class MainPage(webapp.RequestHandler):
   def get(self):
     template_values = {
-      'status' : "no status"}
+      'updated' : Calendar.getMe().date() }
 
     path = os.path.join(os.path.dirname(__file__), 'view.html')
     self.response.out.write(template.render(path, template_values))
 
-
-application = webapp.WSGIApplication(
-                                     [('/', MainPage),
-                                      ('/gistr.ics', getICS)
-                                      ],
-                                     debug=True)
+application = webapp.WSGIApplication([('/', MainPage), ('/masters.ics', showICS), ('/getics', getICS)],debug=True)
 
 def main():
   run_wsgi_app(application)

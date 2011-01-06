@@ -1,0 +1,4 @@
+cron:
+- description: daily Masters ICS check
+  url: /getics
+  schedule: every 3 hours

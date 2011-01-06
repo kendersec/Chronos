@@ -1,8 +1,12 @@
-application: thesheep42
+application: kendersec
 version: 1
 runtime: python
 api_version: 1
 
 handlers:
+- url: /getics
+  script: chronos.py
+  login: admin
+  
 - url: /.*
   script: chronos.py
