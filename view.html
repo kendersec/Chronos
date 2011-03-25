@@ -1,8 +1,10 @@
 <html>
 <body>
   <h1>Kr0n0s</h1>
+  <h2>Welcome {{ email }}</h2>
   <h2>Updated last time:</h2>
   <pre>{{ updated }}</pre>
-  <br/><h3><a href="/masters.ics">Get ICS</a></h3>
+  <br/><h3><a href="/ics?uid={{ uid }}">ICS</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="/user/pref">Preferences</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;<a href="/user/refresh">Refresh</a></h3>
 </body>
 </html>

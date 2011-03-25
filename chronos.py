@@ -7,27 +7,31 @@ from google.appengine.api import urlfetch
 from google.appengine.ext.webapp import template
 from google.appengine.ext import webapp
 from google.appengine.ext import db
+from google.appengine.api import users
 from google.appengine.ext.webapp.util import run_wsgi_app
 from HTMLParser import HTMLParser
 from datetime import datetime, timedelta
 
-## Class to hold the calendar in the DB
+## Class to hold the calendar and users in the DB
 class Calendar(db.Model):
   ICS = db.TextProperty()
   dt = db.DateTimeProperty(auto_now=True)
-  
-  @staticmethod
-  def getMe():
-    acal = Calendar.all()
-    if acal.count() == 1:
-      return acal[0]
-    else:
-      for cal in acal:
-        cal.remove()
-      return Calendar()
       
   def date(self):
     return (self.dt + timedelta(hours = 2)).ctime()
+
+class UserPref(db.Model):
+
+  user = db.UserProperty()
+  uid = db.StringProperty()
+  cal = db.ReferenceProperty()
+  query = db.StringProperty()
+  nbw = db.IntegerProperty()
+    
+  @staticmethod
+  def getdata(u):
+    q = db.GqlQuery("SELECT * FROM UserPref WHERE user = :1", u)
+    return q.get()
       
   
 ## Parser for the data
@@ -157,9 +161,7 @@ def make_event_list(parsed):
   return events
     
 ## Fetch the data from Chronos
-class getICS(webapp.RequestHandler):
-  def get(self):  
-
+def getICS(cal, query, nbw):
     url = "http://chronos.epita.net/"
     url = "http://chronos.epita.net/ade/standard/gui/interface.jsp?projectId=4&login=student&password="
 
@@ -177,7 +179,7 @@ class getICS(webapp.RequestHandler):
     cookie = session_id
 
     # Find the leaf following the given path
-    categorie = "category=%s" % "trainee"
+    """categorie = "category=%s" % "trainee"
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, categorie)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
 
@@ -188,6 +190,7 @@ class getICS(webapp.RequestHandler):
 
     branch = "branchId=%i" % 748
     url = "%s?%s&expand=false&forceLoad=false&reload=false" % (tree, branch)
+
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
 
     branch = "branchId=%i" % 989
@@ -196,7 +199,11 @@ class getICS(webapp.RequestHandler):
     
     # Access the leaf
     select = "selectId=%i" % 1089
+
     url = "%s?%s&forceLoad=false&scroll=0" % (tree, select)
+    result = urlfetch.fetch(url, headers = { 'cookie': cookie })"""
+
+    url = "%s?nbFilters=1&what0=name&how0=contains&filterValue0=%s" % (tree, query)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
     
     # Get the time bar
@@ -216,7 +223,7 @@ class getICS(webapp.RequestHandler):
     url = "%s?%s&reset=true" % (bounds, week)
     result = urlfetch.fetch(url, headers = { 'cookie': cookie })
     
-    for i in range(1,7):
+    for i in range(1, nbw - 1):
       week = "week=%i" % (nweek + i)
       url = "%s?%s&reset=false" % (bounds, week)
       result = urlfetch.fetch(url, headers = { 'cookie': cookie })
@@ -248,24 +255,101 @@ class getICS(webapp.RequestHandler):
 
     path = os.path.join(os.path.dirname(__file__), 'calendar.ics')
     
-    cal = Calendar.getMe()
     cal.ICS = template.render(path, template_values)
     cal.put()
 
+class GetAll(webapp.RequestHandler):
+  def get(self):  
+    ups = UserPref.all()
+    for up in ups:
+        getICS(up.cal, up.query, up.nbw)
 
-class showICS(webapp.RequestHandler):
+## ics of user_id
+class ShowICS(webapp.RequestHandler):
   def get(self):
-    self.response.out.write(Calendar.getMe().ICS)
+    uid = self.request.get('uid')
+  
+    if uid:
+        q = db.GqlQuery("SELECT * FROM UserPref WHERE uid = :1", uid)
+        user = q.get()
+        self.response.out.write(user.cal.ICS)
+    else:
+        self.redirect("/")
+
+## Register ##
+class Register(webapp.RequestHandler):
+  def get(self):
+    user = users.get_current_user()
+    query = self.request.get('query')
+    nbw = self.request.get('nbw')
     
+    ud = UserPref.getdata(user);
+    
+    if (query == "" or nbw == "") and not ud:
+      self.response.out.write("""
+        <html>
+          <body>
+            <h2>Register</h2>
+            <form action="/user/register" method="get">
+              <div>Search query&nbsp;<input type="text" name="query" size="10"></input></div>
+              <div>Number of weeks&nbsp;<input type="text" name="nbw" size="3"></input></div>
+              <div><input type="submit" value="Register"></div>
+            </form>
+          </body>
+        </html>""")
+    else:
+      if not ud:
+        up = UserPref()
+        up.user = user
+        up.uid = user.user_id()
+        up.query = query
+        up.nbw = int(nbw)
+        cal = Calendar()
+        getICS(cal, up.query, up.nbw)
+        up.cal = cal
+        up.put()
+        self.redirect("/")
+      else:
+        self.redirect("/")
+
+## Refresh
+class Refresh(webapp.RequestHandler):
+  def get(self):
+    
+    user = users.get_current_user()
+    ud = UserPref.getdata(user)
+  
+    if ud:
+      getICS(ud.cal, ud.query, ud.nbw)
+      self.redirect("/")
+    else:
+      self.redirect("/user/register")    
+
+## MainPage    
 class MainPage(webapp.RequestHandler):
   def get(self):
-    template_values = {
-      'updated' : Calendar.getMe().date() }
+  
+    user = users.get_current_user()
+    ud = UserPref.getdata(user)
+  
+    if ud:
+        template_values = {
+          'email': user.email(),
+          'updated' : ud.cal.date(),
+          'uid' : user.user_id()
+        }
 
-    path = os.path.join(os.path.dirname(__file__), 'view.html')
-    self.response.out.write(template.render(path, template_values))
+        path = os.path.join(os.path.dirname(__file__), 'view.html')
+        self.response.out.write(template.render(path, template_values))
+    else:
+        self.redirect("/user/register")
 
-application = webapp.WSGIApplication([('/', MainPage), ('/masters.ics', showICS), ('/getics', getICS)],debug=True)
+application = webapp.WSGIApplication([('/', MainPage),
+                                      ('/ics', ShowICS),
+                                      ('/update', GetAll),
+                                      ('/user/register', Register),
+                                      ('/user/refresh', Refresh)],
+                                      debug=True)
 
 def main():
   run_wsgi_app(application)

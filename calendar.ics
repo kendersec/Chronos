@@ -1,6 +1,6 @@
 BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//Anthony PERARD <perard_a\@epita.fr> chronos.py and fixed by kender <kendersec\@gmail.com>//EN
+PRODID:-//Anthony PERARD <perard_a\@epita.fr> chronos.py and fixed/improved by kender <kendersec\@gmail.com>//EN
 {% for event in events %}
 BEGIN:VEVENT
 UID:chronos-sheep-{{ event.uid }}-beta-v2

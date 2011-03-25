@@ -4,9 +4,13 @@ runtime: python
 api_version: 1
 
 handlers:
-- url: /getics
+- url: /update
   script: chronos.py
   login: admin
+  
+- url: /user/.*
+  script: chronos.py
+  login: required
   
 - url: /.*
   script: chronos.py
